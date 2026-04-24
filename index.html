@@ -238,6 +238,7 @@ function safe(text=''){ return String(text).replace(/[&<>"']/g, s => ({'&':'&amp
 
 const dailyKey = now.toISOString().slice(0,10);
 let editingTaskId = null;
+let editingTaskIsSystem = false;
 
 function openSheet(id){ document.getElementById(id).classList.add('open'); }
 function closeSheet(e, id){ if(!e || e.target.id === id) document.getElementById(id).classList.remove('open'); }
@@ -703,9 +704,12 @@ function openAddTask(){
 }
 
 function openEditTask(id){
-  const task = customTasks.find(t => t.id === id);
+  // Look in ALL tasks, not just custom ones
+  const allTasks = [...getAllTasks('daily'), ...getAllTasks('weekly'), ...getAllTasks('monthly'), ...getAllTasks('quarterly')];
+  const task = allTasks.find(t => t.id === id);
   if(!task){ alert('No se encontró la tarea.'); return; }
   editingTaskId = id;
+  editingTaskIsSystem = !!task.system; // flag to handle system task overrides
   document.getElementById('taskSheetTitle').textContent = 'Editar tarea';
   document.getElementById('taskNameInput').value = task.name;
   document.getElementById('taskFreqInput').value = task.category;
@@ -760,14 +764,27 @@ function saveTask(){
   }
 
   if(editingTaskId){
-    const idx = customTasks.findIndex(t => t.id === editingTaskId);
-    if(idx !== -1) customTasks[idx] = task; else customTasks.push(task);
+    const isCustom = customTasks.some(t => t.id === editingTaskId);
+    if(isCustom){
+      // Update custom task in place
+      const idx = customTasks.findIndex(t => t.id === editingTaskId);
+      if(idx !== -1) customTasks[idx] = task; else customTasks.push(task);
+    } else {
+      // System task: hide the original, save edited version as new custom task with new ID
+      task.id = uid(freq[0]); // give it a new ID
+      if(!deletedTaskIds.includes(editingTaskId)){
+        deletedTaskIds.push(editingTaskId);
+        saveState('deleted_task_ids', deletedTaskIds);
+      }
+      customTasks.push(task);
+    }
   } else {
     customTasks.push(task);
   }
   saveState('custom_tasks', customTasks);
   closeSheet(null, 'taskSheetOverlay');
   editingTaskId = null;
+  editingTaskIsSystem = false;
   render();
 }
 
@@ -812,7 +829,7 @@ function openTaskManager(){
           ${t.system ? `<span class="tag tag-blue">Sistema</span>` : `<span class="tag tag-green">Personalizada</span>`}
         </div>
         <div class="manage-actions">
-          ${canEdit ? `<button class="btn-small btn-edit" onclick="openEditTask('${t.id}')">✏️ Editar</button>` : ''}
+          <button class="btn-small btn-edit" onclick="openEditTask('${t.id}')">✏️ Editar</button>
           <button class="btn-small btn-delete" onclick="deleteTaskInManager('${t.id}')">🗑 Eliminar</button>
         </div>
       </div>`;
