@@ -67,6 +67,8 @@ button{cursor:pointer}
 .badge-tri{background:#32250f;color:#ffd591}
 .badge-urgent{background:#38181b;color:#ffb4b4}
 .badge-custom{background:#2c2230;color:#e7c7ff}
+.badge-daily{background:#1c1d3a;color:#b4b8ff}
+.time-chip{font-size:12px;background:#151c2d;color:#7bb8f5;padding:3px 8px;border-radius:8px;font-weight:700;letter-spacing:.02em}
 .progress-wrap{padding:0 16px 14px}
 .progress-bar{height:6px;background:#11161a;border-radius:999px;overflow:hidden;border:1px solid var(--line)}
 .progress-fill{height:100%;background:linear-gradient(90deg,#1D9E75,#5ed2ad);border-radius:999px;transition:width .3s}
@@ -198,15 +200,6 @@ hr.sep{border:none;border-top:1px solid var(--line);margin:14px 0}
   <div id="notify-area"></div>
   <div id="main-content"></div>
 
-  <div class="fab-group">
-    <button class="fab secondary" onclick="openTaskManager()" title="Gestionar tareas">
-      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h7"/><circle cx="18" cy="17" r="3" /></svg>
-    </button>
-    <button class="fab" onclick="openAddTask()" title="Agregar tarea">
-      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-    </button>
-  </div>
-
   <div class="modal-overlay" id="modal" onclick="closeModal(event)">
     <div class="modal">
       <button class="close-modal" onclick="closeModal()">✕</button>
@@ -242,6 +235,12 @@ function projectStateKey(prefix, scope, project){ return `${prefix}_${scope}_${p
 function checkIcon(){ return `<svg viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`; }
 function uid(prefix='c'){ return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,7); }
 function safe(text=''){ return String(text).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+
+const dailyKey = now.toISOString().slice(0,10);
+let editingTaskId = null;
+
+function openSheet(id){ document.getElementById(id).classList.add('open'); }
+function closeSheet(e, id){ if(!e || e.target.id === id) document.getElementById(id).classList.remove('open'); }
 
 const DEFAULT_WEEKLY_TASKS = [
   {id:'w1',name:'Planilla semanal',day:1,badge:'Lunes',category:'weekly',scopeType:'project',projects:[...PROJECTS],system:true},
@@ -286,12 +285,18 @@ let deletedTaskIds = loadState('deleted_task_ids', []);
 let weeklyDone = {};
 let monthlyDone = {};
 let quarterlyDone = {};
+let dailyDone = {};
 let globalWeeklyDone = loadState(projectStateKey('wd',weekKey,'GLOBAL'), {});
 let globalMonthlyDone = loadState(projectStateKey('md',monthKey,'GLOBAL'), {});
 let globalQuarterlyDone = loadState(projectStateKey('qd',getQKey(),'GLOBAL'), {});
+let globalDailyDone = loadState(projectStateKey('dd',dailyKey,'GLOBAL'), {});
 
 function getAllTasks(category){
-  let base = category === 'weekly' ? DEFAULT_WEEKLY_TASKS : category === 'monthly' ? DEFAULT_MONTHLY_TASKS : DEFAULT_QUARTERLY_TASKS;
+  let base;
+  if(category === 'weekly') base = DEFAULT_WEEKLY_TASKS;
+  else if(category === 'monthly') base = DEFAULT_MONTHLY_TASKS;
+  else if(category === 'quarterly') base = DEFAULT_QUARTERLY_TASKS;
+  else base = []; // daily: solo custom
   const customs = customTasks.filter(t => t.category === category);
   return [...base, ...customs].filter(t => !deletedTaskIds.includes(t.id));
 }
@@ -302,6 +307,9 @@ function getTasksForSelection(category, selection){
   }
   return all.filter(t => t.scopeType === 'global' || (t.projects || []).includes(selection));
 }
+function getDailyTasksForSelection(selection){
+  return getTasksForSelection('daily', selection);
+}
 function getProjectOnlyTasks(category, project){
   return getAllTasks(category).filter(t => t.scopeType !== 'global' && (t.projects || []).includes(project));
 }
@@ -309,10 +317,12 @@ function isDone(task){
   if(task.scopeType === 'global'){
     if(task.category === 'weekly') return !!globalWeeklyDone[task.id];
     if(task.category === 'monthly') return !!globalMonthlyDone[task.id];
+    if(task.category === 'daily') return !!globalDailyDone[task.id];
     return !!globalQuarterlyDone[task.id];
   }
   if(task.category === 'weekly') return !!weeklyDone[task.id];
   if(task.category === 'monthly') return !!monthlyDone[task.id];
+  if(task.category === 'daily') return !!dailyDone[task.id];
   return !!quarterlyDone[task.id];
 }
 function toggleTask(id, category){
@@ -322,10 +332,12 @@ function toggleTask(id, category){
   if(task.scopeType === 'global'){
     if(category === 'weekly'){ state = globalWeeklyDone; key = projectStateKey('wd', weekKey, 'GLOBAL'); }
     else if(category === 'monthly'){ state = globalMonthlyDone; key = projectStateKey('md', monthKey, 'GLOBAL'); }
+    else if(category === 'daily'){ state = globalDailyDone; key = projectStateKey('dd', dailyKey, 'GLOBAL'); }
     else { state = globalQuarterlyDone; key = projectStateKey('qd', getQKey(), 'GLOBAL'); }
   } else {
     if(category === 'weekly'){ state = weeklyDone; key = projectStateKey('wd', weekKey, currentProject); }
     else if(category === 'monthly'){ state = monthlyDone; key = projectStateKey('md', monthKey, currentProject); }
+    else if(category === 'daily'){ state = dailyDone; key = projectStateKey('dd', dailyKey, currentProject); }
     else { state = quarterlyDone; key = projectStateKey('qd', getQKey(), currentProject); }
   }
   state[id] = !state[id];
@@ -336,22 +348,26 @@ function reloadProjectState(){
   weeklyDone = loadState(projectStateKey('wd', weekKey, currentProject), {});
   monthlyDone = loadState(projectStateKey('md', monthKey, currentProject), {});
   quarterlyDone = loadState(projectStateKey('qd', getQKey(), currentProject), {});
+  dailyDone = loadState(projectStateKey('dd', dailyKey, currentProject), {});
   globalWeeklyDone = loadState(projectStateKey('wd', weekKey, 'GLOBAL'), {});
   globalMonthlyDone = loadState(projectStateKey('md', monthKey, 'GLOBAL'), {});
   globalQuarterlyDone = loadState(projectStateKey('qd', getQKey(), 'GLOBAL'), {});
+  globalDailyDone = loadState(projectStateKey('dd', dailyKey, 'GLOBAL'), {});
 }
 function listStateFor(project){
   return {
     w: loadState(projectStateKey('wd', weekKey, project), {}),
     m: loadState(projectStateKey('md', monthKey, project), {}),
-    q: loadState(projectStateKey('qd', getQKey(), project), {})
+    q: loadState(projectStateKey('qd', getQKey(), project), {}),
+    d: loadState(projectStateKey('dd', dailyKey, project), {})
   };
 }
 function listGlobalState(){
   return {
     w: loadState(projectStateKey('wd', weekKey, 'GLOBAL'), {}),
     m: loadState(projectStateKey('md', monthKey, 'GLOBAL'), {}),
-    q: loadState(projectStateKey('qd', getQKey(), 'GLOBAL'), {})
+    q: loadState(projectStateKey('qd', getQKey(), 'GLOBAL'), {}),
+    d: loadState(projectStateKey('dd', dailyKey, 'GLOBAL'), {})
   };
 }
 function changeProject(project){
@@ -375,8 +391,11 @@ function taskScopePill(task){
 }
 function taskCard(task, done, overdue=false){
   const toggle = `toggleTask('${task.id}','${task.category}')`;
-  let badgeClass = task.category === 'weekly' ? 'week' : task.category === 'monthly' ? 'month' : 'tri';
-  if(task.custom) badgeClass = 'custom';
+  let badgeClass = task.category === 'weekly' ? 'week' : task.category === 'monthly' ? 'month' : task.category === 'daily' ? 'daily' : 'tri';
+  if(task.custom && task.category !== 'daily') badgeClass = 'custom';
+  const timeChip = (task.category === 'daily' && task.time)
+    ? `<span class="time-chip">🕐 ${task.time}</span>`
+    : '';
   return `<div class="task-card${done?' done':''}${overdue?' overdue':''}" onclick="${toggle}">
     <div class="check">${done ? checkIcon() : ''}</div>
     <div class="task-body">
@@ -386,6 +405,7 @@ function taskCard(task, done, overdue=false){
       </div>
       <div class="task-meta">
         ${task.badge ? `<span class="badge badge-${badgeClass}">${safe(task.badge)}</span>` : ''}
+        ${timeChip}
         ${overdue && !done ? `<span class="badge badge-urgent">vencida</span>` : ''}
       </div>
     </div>
@@ -406,11 +426,13 @@ function doneForProject(task, project){
     const g = listGlobalState();
     if(task.category === 'weekly') return !!g.w[task.id];
     if(task.category === 'monthly') return !!g.m[task.id];
+    if(task.category === 'daily') return !!g.d[task.id];
     return !!g.q[task.id];
   }
   const s = listStateFor(project);
   if(task.category === 'weekly') return !!s.w[task.id];
   if(task.category === 'monthly') return !!s.m[task.id];
+  if(task.category === 'daily') return !!s.d[task.id];
   return !!s.q[task.id];
 }
 function monthlyOverduesForProject(project){
@@ -421,13 +443,13 @@ function monthlySoonForProject(project){
 }
 function totalDoneForProject(project){
   let done = 0;
-  ['weekly','monthly','quarterly'].forEach(cat=>{
+  ['daily','weekly','monthly','quarterly'].forEach(cat=>{
     getTasksForSelection(cat, project).forEach(t => { if(doneForProject(t, project)) done++; });
   });
   return done;
 }
 function totalPossibleForProject(project){
-  return getTasksForSelection('weekly', project).length + getTasksForSelection('monthly', project).length + getTasksForSelection('quarterly', project).length;
+  return getTasksForSelection('daily', project).length + getTasksForSelection('weekly', project).length + getTasksForSelection('monthly', project).length + getTasksForSelection('quarterly', project).length;
 }
 function riskLevel(project){
   const overdue = monthlyOverduesForProject(project).length;
@@ -519,19 +541,49 @@ function renderPanelProject(){
 
 function renderHoy(){
   const selection = currentProject;
-  const items = todayTasksForSelection(selection);
+  const weeklyItems = todayTasksForSelection(selection);
+  // Daily tasks: all daily tasks for this selection, sorted by time
+  const dailyItems = getDailyTasksForSelection(selection).sort((a,b) => {
+    if(a.time && b.time) return a.time.localeCompare(b.time);
+    if(a.time) return -1;
+    if(b.time) return 1;
+    return 0;
+  });
+
   let html = `<div class="section"><div class="section-label">Hoy — ${DAYS[todayDay]} ${todayDate} de ${MONTHS[now.getMonth()]}</div>`;
-  if(!items.length){
+
+  if(dailyItems.length){
+    html += `<div class="day-header" style="padding:4px 0 4px">📅 Tareas diarias</div>`;
+    let doneDailyCount = 0;
+    dailyItems.forEach(t => {
+      const isDoneNow = doneForProject(t, selection === 'GLOBAL' ? 'GLOBAL' : currentProject);
+      if(isDoneNow) doneDailyCount++;
+      html += taskCard(t, isDoneNow, false);
+    });
+  }
+
+  if(!weeklyItems.length && !dailyItems.length){
     html += `<div class="empty-state">No hay tareas urgentes para hoy 🎉</div></div>`;
     return html;
   }
-  let done = 0;
-  items.forEach(t => {
-    const isDone = selection === 'GLOBAL' ? doneForProject(t, 'GLOBAL') : doneForProject(t, currentProject);
-    if(isDone) done++;
-    html += taskCard(t, isDone, !!t.overdue);
+
+  if(weeklyItems.length){
+    if(dailyItems.length) html += `<div class="day-header" style="padding:8px 0 4px">📋 Tareas periódicas</div>`;
+    let done = 0;
+    weeklyItems.forEach(t => {
+      const isDoneNow = selection === 'GLOBAL' ? doneForProject(t, 'GLOBAL') : doneForProject(t, currentProject);
+      if(isDoneNow) done++;
+      html += taskCard(t, isDoneNow, !!t.overdue);
+    });
+  }
+
+  const totalAll = dailyItems.length + weeklyItems.length;
+  let doneAll = 0;
+  [...dailyItems, ...weeklyItems].forEach(t => {
+    const isDoneNow = selection === 'GLOBAL' ? doneForProject(t, 'GLOBAL') : doneForProject(t, currentProject);
+    if(isDoneNow) doneAll++;
   });
-  html += `</div>` + progressBar(done, items.length);
+  html += `</div>` + progressBar(doneAll, totalAll);
   return html;
 }
 
@@ -617,138 +669,165 @@ function closeModal(e){
   if(!e || e.target.id === 'modal') document.getElementById('modal').classList.remove('open');
 }
 
+function renderDynamicFields(){
+  const freq = document.getElementById('taskFreqInput').value;
+  let html = '';
+  if(freq === 'daily'){
+    html = `<div class="field"><label class="label">Hora (opcional)</label><input id="taskTimeInput" type="time" class="input" /></div>`;
+  } else if(freq === 'weekly'){
+    html = `<div class="field"><label class="label">Día de la semana</label><select id="taskDayInput" class="select"><option value="1">Lunes</option><option value="2">Martes</option><option value="3">Miércoles</option><option value="4">Jueves</option><option value="5">Viernes</option><option value="6">Sábado</option><option value="0">Domingo</option><option value="-1">Recurrente (flexible)</option></select></div>`;
+  } else if(freq === 'monthly'){
+    html = `<div class="field"><label class="label">Fecha límite del mes</label><input id="taskDeadlineInput" type="number" min="1" max="31" value="15" class="input" /></div>`;
+  }
+  document.getElementById('dynamicFields').innerHTML = html;
+}
+
+function setScopeType(type){
+  document.getElementById('scopeGlobalBtn').classList.toggle('active', type === 'global');
+  document.getElementById('scopeProjectBtn').classList.toggle('active', type === 'project');
+  document.getElementById('projectChooserWrap').style.display = type === 'project' ? 'block' : 'none';
+}
+
 function openAddTask(){
-  const projectOptions = PROJECTS.map(p => `<button type="button" class="project-chip" data-project="${safe(p)}" onclick="toggleProjectChip(this)">${safe(p)}</button>`).join('');
-  openModal(
-    'Agregar tarea',
-    'Puedes crear tareas globales o solo para uno o varios proyectos.',
-    `<div class="form-group">
-      <label class="form-label">Nombre de la tarea</label>
-      <input class="input" id="newTaskName" placeholder="Ej. Subir auditoría mensual" />
-    </div>
-    <div class="form-group">
-      <label class="form-label">Frecuencia</label>
-      <div class="choice-grid">
-        <button type="button" class="chip-btn active" data-freq="weekly" onclick="selectFreq(this,'weekly')">Semanal</button>
-        <button type="button" class="chip-btn" data-freq="monthly" onclick="selectFreq(this,'monthly')">Mensual</button>
-        <button type="button" class="chip-btn" data-freq="quarterly" onclick="selectFreq(this,'quarterly')">Trimestral</button>
-      </div>
-    </div>
-    <div class="form-group" id="weeklyFields">
-      <label class="form-label">Día de la semana</label>
-      <select class="input" id="newTaskDay">
-        <option value="1">Lunes</option><option value="2">Martes</option><option value="3">Miércoles</option>
-        <option value="4">Jueves</option><option value="5">Viernes</option><option value="6">Sábado</option>
-        <option value="0">Domingo</option><option value="-1">Recurrente (cada 2 días / flexible)</option>
-      </select>
-    </div>
-    <div class="form-group" id="monthlyFields" style="display:none">
-      <label class="form-label">Fecha límite del mes</label>
-      <input class="input" id="newTaskDeadline" type="number" min="1" max="31" value="15" />
-    </div>
-    <div class="form-group">
-      <label class="form-label">Texto del badge</label>
-      <input class="input" id="newTaskBadge" placeholder="Ej. Máx. día 15" />
-    </div>
-    <div class="form-group">
-      <label class="form-label">Alcance</label>
-      <div class="choice-grid">
-        <button type="button" class="chip-btn active" data-scope="global" onclick="selectScope(this,'global')">Global</button>
-        <button type="button" class="chip-btn" data-scope="project" onclick="selectScope(this,'project')">Solo proyecto(s)</button>
-      </div>
-    </div>
-    <div class="form-group" id="projectScopeBox" style="display:none">
-      <label class="form-label">Escoge proyecto(s)</label>
-      <div class="project-checks">${projectOptions}</div>
-    </div>
-    <div class="action-row">
-      <button class="primary-btn" onclick="saveNewTask()">Guardar tarea</button>
-      <button class="secondary-btn" onclick="closeModal()">Cancelar</button>
-    </div>`
-  );
+  editingTaskId = null;
+  document.getElementById('taskSheetTitle').textContent = 'Nueva tarea';
+  document.getElementById('taskNameInput').value = '';
+  document.getElementById('taskFreqInput').value = 'daily';
+  document.getElementById('taskBadgeInput').value = '';
+  document.getElementById('projectChooser').innerHTML = PROJECTS.map(p =>
+    `<label class="project-check"><input type="checkbox" value="${safe(p)}" />${safe(p)}</label>`
+  ).join('');
+  setScopeType('global');
+  renderDynamicFields();
+  openSheet('taskSheetOverlay');
 }
 
-function selectFreq(el, freq){
-  document.querySelectorAll('[data-freq]').forEach(b => b.classList.toggle('active', b === el));
-  document.getElementById('weeklyFields').style.display = freq === 'weekly' ? 'block' : 'none';
-  document.getElementById('monthlyFields').style.display = freq === 'monthly' ? 'block' : 'none';
+function openEditTask(id){
+  const task = customTasks.find(t => t.id === id);
+  if(!task){ alert('No se encontró la tarea.'); return; }
+  editingTaskId = id;
+  document.getElementById('taskSheetTitle').textContent = 'Editar tarea';
+  document.getElementById('taskNameInput').value = task.name;
+  document.getElementById('taskFreqInput').value = task.category;
+  document.getElementById('taskBadgeInput').value = task.badge || '';
+  document.getElementById('projectChooser').innerHTML = PROJECTS.map(p =>
+    `<label class="project-check"><input type="checkbox" value="${safe(p)}" ${(task.projects||[]).includes(p)?'checked':''}/>${safe(p)}</label>`
+  ).join('');
+  setScopeType(task.scopeType || 'global');
+  renderDynamicFields();
+  setTimeout(() => {
+    if(task.category === 'weekly' && document.getElementById('taskDayInput'))
+      document.getElementById('taskDayInput').value = task.day ?? 1;
+    if(task.category === 'monthly' && document.getElementById('taskDeadlineInput'))
+      document.getElementById('taskDeadlineInput').value = task.deadline ?? 15;
+    if(task.category === 'daily' && document.getElementById('taskTimeInput'))
+      document.getElementById('taskTimeInput').value = task.time || '';
+  }, 10);
+  closeSheet(null, 'manageSheetOverlay');
+  openSheet('taskSheetOverlay');
 }
-function selectScope(el, scope){
-  document.querySelectorAll('[data-scope]').forEach(b => b.classList.toggle('active', b === el));
-  document.getElementById('projectScopeBox').style.display = scope === 'project' ? 'block' : 'none';
-}
-function toggleProjectChip(el){ el.classList.toggle('active'); }
-function getSelectedFreq(){ const el = document.querySelector('[data-freq].active'); return el ? el.dataset.freq : 'weekly'; }
-function getSelectedScope(){ const el = document.querySelector('[data-scope].active'); return el ? el.dataset.scope : 'global'; }
 
-function saveNewTask(){
-  const name = (document.getElementById('newTaskName').value || '').trim();
-  const badge = (document.getElementById('newTaskBadge').value || '').trim();
-  const freq = getSelectedFreq();
-  const scopeType = getSelectedScope();
-  const selectedProjects = [...document.querySelectorAll('.project-chip.active')].map(el => el.dataset.project);
+function saveTask(){
+  const name = (document.getElementById('taskNameInput').value || '').trim();
+  const badge = (document.getElementById('taskBadgeInput').value || '').trim();
+  const freq = document.getElementById('taskFreqInput').value;
+  const scopeType = document.getElementById('scopeGlobalBtn').classList.contains('active') ? 'global' : 'project';
+  const selectedProjects = [...document.querySelectorAll('#projectChooser input[type=checkbox]:checked')].map(el => el.value);
   if(!name){ alert('Escribe el nombre de la tarea.'); return; }
   if(scopeType === 'project' && !selectedProjects.length){ alert('Escoge al menos un proyecto.'); return; }
 
+  const freqLabels = {daily:'Diaria', weekly:'Semanal', monthly:'Mensual', quarterly:'Trimestral'};
   const task = {
-    id: uid(freq[0]),
+    id: editingTaskId || uid(freq[0]),
     name,
-    badge: badge || (freq === 'weekly' ? 'Semanal' : freq === 'monthly' ? 'Mensual' : 'Trimestral'),
+    badge: badge || freqLabels[freq] || freq,
     category: freq,
     scopeType,
     projects: scopeType === 'project' ? selectedProjects : [],
     custom: true
   };
   if(freq === 'weekly'){
-    task.day = parseInt(document.getElementById('newTaskDay').value, 10);
+    task.day = parseInt(document.getElementById('taskDayInput')?.value ?? 1, 10);
     if(task.day === -1) task.recurring = true;
   }
   if(freq === 'monthly'){
-    const deadline = parseInt(document.getElementById('newTaskDeadline').value, 10);
+    const deadline = parseInt(document.getElementById('taskDeadlineInput')?.value ?? 15, 10);
     if(!deadline || deadline < 1 || deadline > 31){ alert('La fecha límite mensual debe ir de 1 a 31.'); return; }
     task.deadline = deadline;
   }
-  customTasks.push(task);
+  if(freq === 'daily'){
+    task.time = document.getElementById('taskTimeInput')?.value || '';
+  }
+
+  if(editingTaskId){
+    const idx = customTasks.findIndex(t => t.id === editingTaskId);
+    if(idx !== -1) customTasks[idx] = task; else customTasks.push(task);
+  } else {
+    customTasks.push(task);
+  }
   saveState('custom_tasks', customTasks);
-  closeModal();
+  closeSheet(null, 'taskSheetOverlay');
+  editingTaskId = null;
   render();
 }
+
+// Keep legacy saveNewTask alias for safety
+function saveNewTask(){ saveTask(); }
 
 function openManageTasks(){ openTaskManager(); }
 
 function openTaskManager(){
-  const all = [...getAllTasks('weekly'), ...getAllTasks('monthly'), ...getAllTasks('quarterly')];
-  let html = `<div class="modal-title">Gestionar tareas</div><div class="modal-sub">Aquí puedes eliminar tareas y revisar si son globales o de proyectos específicos.</div>`;
+  const catOrder = {daily:0, weekly:1, monthly:2, quarterly:3};
+  const freqLabels = {daily:'Diaria', weekly:'Semanal', monthly:'Mensual', quarterly:'Trimestral'};
+  const all = [
+    ...getAllTasks('daily'),
+    ...getAllTasks('weekly'),
+    ...getAllTasks('monthly'),
+    ...getAllTasks('quarterly')
+  ];
+  let html = '';
   if(!all.length){
-    html += `<div class="empty-state">No hay tareas cargadas.</div>`;
+    html = `<div class="empty-state">No hay tareas cargadas.</div>`;
   } else {
-    all.sort((a,b) => a.name.localeCompare(b.name, 'es'));
+    all.sort((a,b) => {
+      const co = (catOrder[a.category]||0) - (catOrder[b.category]||0);
+      if(co !== 0) return co;
+      return a.name.localeCompare(b.name, 'es');
+    });
     all.forEach(t => {
       const scopeText = t.scopeType === 'global' ? 'Global' : (t.projects || []).join(', ');
-      const freqText = t.category === 'weekly' ? 'Semanal' : t.category === 'monthly' ? 'Mensual' : 'Trimestral';
-      html += `<div class="manager-card">
-        <div class="manager-top">
+      const freqText = freqLabels[t.category] || t.category;
+      const timeInfo = (t.category === 'daily' && t.time) ? ` · ${t.time}` : '';
+      const canEdit = !!t.custom;
+      html += `<div class="manage-card">
+        <div class="manage-top">
           <div>
-            <div class="manager-name">${safe(t.name)}</div>
-            <div class="manager-meta">${freqText} · ${safe(scopeText || '')}</div>
+            <div class="manage-name">${safe(t.name)}</div>
+            <div class="mini">${freqText}${timeInfo} · ${safe(scopeText || '')}</div>
           </div>
           ${taskScopePill(t)}
         </div>
-        <div class="manager-actions">
-          <button class="danger-btn" onclick="deleteTask('${t.id}')">Eliminar</button>
+        <div class="tag-row" style="margin-bottom:2px">
+          ${t.badge ? `<span class="tag tag-gray">${safe(t.badge)}</span>` : ''}
+          ${t.system ? `<span class="tag tag-blue">Sistema</span>` : `<span class="tag tag-green">Personalizada</span>`}
+        </div>
+        <div class="manage-actions">
+          ${canEdit ? `<button class="btn-small btn-edit" onclick="openEditTask('${t.id}')">✏️ Editar</button>` : ''}
+          <button class="btn-small btn-delete" onclick="deleteTaskInManager('${t.id}')">🗑 Eliminar</button>
         </div>
       </div>`;
     });
   }
-  html += `<div class="action-row"><button class="secondary-btn" onclick="closeModal()">Cerrar</button></div>`;
-  document.getElementById('modalContent').innerHTML = html;
-  document.getElementById('modal').classList.add('open');
+  document.getElementById('manageList').innerHTML = html;
+  openSheet('manageSheetOverlay');
+}
+
+function deleteTaskInManager(id){
+  if(!confirm('¿Eliminar esta tarea?')) return;
+  deleteTask(id);
 }
 
 function deleteTask(id){
-  if(!confirm('¿Eliminar esta tarea?')){
-    return;
-  }
   customTasks = customTasks.filter(t => t.id !== id);
   saveState('custom_tasks', customTasks);
   if(!deletedTaskIds.includes(id)){
@@ -756,20 +835,24 @@ function deleteTask(id){
     saveState('deleted_task_ids', deletedTaskIds);
   }
   // also clear completion marks from all states
-  [projectStateKey('wd', weekKey, 'GLOBAL'), projectStateKey('md', monthKey, 'GLOBAL'), projectStateKey('qd', getQKey(), 'GLOBAL')]
+  [projectStateKey('wd', weekKey, 'GLOBAL'), projectStateKey('md', monthKey, 'GLOBAL'), projectStateKey('qd', getQKey(), 'GLOBAL'), projectStateKey('dd', dailyKey, 'GLOBAL')]
     .forEach(key => {
       const s = loadState(key, {});
       if(s[id]){ delete s[id]; saveState(key, s); }
     });
   PROJECTS.forEach(p => {
-    [projectStateKey('wd', weekKey, p), projectStateKey('md', monthKey, p), projectStateKey('qd', getQKey(), p)]
+    [projectStateKey('wd', weekKey, p), projectStateKey('md', monthKey, p), projectStateKey('qd', getQKey(), p), projectStateKey('dd', dailyKey, p)]
       .forEach(key => {
         const s = loadState(key, {});
         if(s[id]){ delete s[id]; saveState(key, s); }
       });
   });
   reloadProjectState();
-  openTaskManager();
+  // refresh manage sheet if open
+  const manageSheet = document.getElementById('manageSheetOverlay');
+  if(manageSheet && manageSheet.classList.contains('open')){
+    openTaskManager();
+  }
   render();
 }
 
@@ -820,6 +903,7 @@ if(notifyGranted && Notification.permission === 'granted') scheduleReminders();
       <div class="field">
         <label class="label">Frecuencia</label>
         <select id="taskFreqInput" class="select" onchange="renderDynamicFields()">
+          <option value="daily">Diaria (con hora)</option>
           <option value="weekly">Semanal</option>
           <option value="monthly">Mensual</option>
           <option value="quarterly">Trimestral</option>
@@ -861,7 +945,7 @@ if(notifyGranted && Notification.permission === 'granted') scheduleReminders();
       <div class="sheet-title">Gestionar tareas</div>
       <button class="icon-btn" onclick="closeSheet(null,'manageSheetOverlay')">✕</button>
     </div>
-    <div class="helper" style="margin-bottom:12px">Aquí puedes editar o eliminar tareas creadas por ti.</div>
+    <div class="helper" style="margin-bottom:12px">Aquí puedes <strong>editar</strong> o <strong>eliminar</strong> tus tareas personalizadas. Las tareas del sistema solo se pueden eliminar.</div>
     <div class="manage-list" id="manageList"></div>
   </div>
 </div>
